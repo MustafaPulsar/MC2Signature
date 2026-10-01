@@ -234,11 +234,13 @@ M15${z} 4PS
   function buildDocx(d, info, bannerData, logoData, colPx) {
     const px = n => n * 15;                       // CSS px -> twips
     const black = { fill: '000000', type: d.ShadingType.CLEAR, color: 'auto' };
-    const none = { style: d.BorderStyle.NONE, size: 0, color: 'FFFFFF' };
+    const none = { style: d.BorderStyle.NONE, size: 0, color: '000000' }; // black, so any border Outlook draws is invisible
+    const MAC = 4 / 3;                            // Word for Mac copies images at 72dpi (75% size) - enlarge to compensate
+    const nb = s => s.replace(/ /g, '\u00A0');  // non-breaking spaces so lines don't wrap on Mac fonts
     const noBorders = { top: none, bottom: none, left: none, right: none };
     const font = 'Arial';
     const body = { line: 300, lineRule: d.LineRuleType.EXACT, before: 0, after: 0 }; // 20px line height
-    const t = (text, o = {}) => new d.TextRun({ text, font, size: 19, color: 'FFFFFF', ...o });
+    const t = (text, o = {}) => new d.TextRun({ text: nb(text), font, size: 19, color: 'FFFFFF', ...o });
     const link = (url, text, o = {}) => new d.ExternalHyperlink({ link: url, children: [t(text, o)] });
     const para = (children, spacing = body) => new d.Paragraph({ children, spacing });
     const cell = (children, width, margins, o = {}) => new d.TableCell({
@@ -248,14 +250,14 @@ M15${z} 4PS
     const white = { color: 'FFFFFF', underline: { type: d.UnderlineType.SINGLE, color: 'FFFFFF' } };
     const cols = colPx.map(px);
 
-    const col1 = [para([link('mailto:' + info.email, info.email, { color: '7FD1D9' })])];
+    const col1 = [para([link('mailto:' + info.email, info.email, { color: '7FD1D9', underline: { type: d.UnderlineType.NONE } })])];
     if (info.mobile) col1.push(para([t(info.mobile)]));
 
     const rows = [
       new d.TableRow({ children: [cell([
         new d.Paragraph({ spacing: { before: 0, after: px(10) }, children: [
           new d.ExternalHyperlink({ link: 'https://highgrowth50.thisismc2.com/', children: [
-            new d.ImageRun({ data: bannerData, transformation: { width: 592, height: 59 },
+            new d.ImageRun({ data: bannerData, transformation: { width: Math.round(592 * MAC), height: Math.round(59 * MAC) },
               altText: { name: 'banner', title: 'High Growth 50', description: 'High Growth 50 - Growth is changing shape. Download the report.' } })
           ] })
         ] })
@@ -274,7 +276,7 @@ M15${z} 4PS
           para([link('https://www.linkedin.com/company/mc2-manchester-ltd', 'LinkedIn', white)]),
           para([link('https://www.instagram.com/thisismc2/', 'Instagram', white)])
         ], cols[2], { top: px(8), bottom: px(20), left: 0, right: px(16) }, { shading: black }),
-        cell([new d.Paragraph({ children: [new d.ImageRun({ data: logoData, transformation: { width: 113, height: 61 },
+        cell([new d.Paragraph({ children: [new d.ImageRun({ data: logoData, transformation: { width: Math.round(113 * MAC), height: Math.round(61 * MAC) },
               altText: { name: 'logo', title: 'MC2', description: 'MC2 - Employee owned' } })] })],
           cols[3], { top: px(8), bottom: px(20), left: 0, right: px(24) }, { shading: black, verticalAlign: d.VerticalAlign.CENTER })
       ] })
