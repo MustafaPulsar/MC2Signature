@@ -93,13 +93,14 @@
     <p class="sub" style="margin:0 0 10px;">Copying from Word puts the images inside the signature, so recipients see them straight away instead of a "Download pictures" message.</p>
     <ol>
       <li>Fill in your details above and click <strong>Download Word file (Mac)</strong>.</li>
-      <li>Open the downloaded <code>.docx</code> file in <strong>Microsoft Word</strong>.</li>
+      <li>Open the downloaded <code>.docx</code> file in <strong>Microsoft Word</strong>. The banner and logo look bigger than the black block in Word - that's on purpose, they come out the right size in Outlook.</li>
       <li>Press <strong>Cmd + A</strong> to select everything, then <strong>Cmd + C</strong> to copy.</li>
       <li>In Outlook, go to <strong>Outlook &gt; Settings &gt; Signatures</strong> and click <strong>+</strong> to add a new signature.</li>
       <li>Give it a name (for example <em>MC2</em>), click in the signature box and press <strong>Cmd + V</strong> to paste.</li>
       <li>Save it, then set it as the default for <strong>New messages</strong> and <strong>Replies/forwards</strong>.</li>
-      <li>Send a test email to check the banner and logo appear.</li>
+      <li>Send a test email to yourself and check it there - the signature box in Outlook's settings doesn't always show the true sizes.</li>
     </ol>
+    <p class="sub" style="margin:10px 0 0;">If the signature looks white instead of black, Outlook is in dark mode - switch to light mode (<strong>Outlook &gt; Settings &gt; General &gt; Appearance</strong>) to check it. Recipients see the original colours.</p>
   </div>
 </main>
 
@@ -206,15 +207,16 @@ M15${z} 4PS
 
   // ---------- Word download (images embedded, for Outlook for Mac) ----------
 
-  // Load the Word library only when the button is first used
-  let docxLib;
-  const loadDocx = () => docxLib || (docxLib = new Promise((resolve, reject) => {
+  // Load the libraries only when the button is first used
+  const loaded = {};
+  const loadScript = (url, global) => loaded[url] || (loaded[url] = new Promise((resolve, reject) => {
     const s = document.createElement('script');
-    s.src = 'https://cdn.jsdelivr.net/npm/docx@8.5.0/build/index.umd.js';
-    s.onload = () => window.docx ? resolve(window.docx) : reject(new Error('Word library did not load'));
-    s.onerror = () => { docxLib = null; reject(new Error('Could not load the Word library - check your internet connection.')); };
+    s.src = url;
+    s.onload = () => window[global] ? resolve(window[global]) : reject(new Error('A library did not load'));
+    s.onerror = () => { delete loaded[url]; reject(new Error('Could not load a library - check your internet connection.')); };
     document.head.appendChild(s);
   }));
+  const loadDocx = () => loadScript('https://cdn.jsdelivr.net/npm/docx@8.5.0/build/index.umd.js', 'docx');
 
   const fetchImage = async f => {
     const r = await fetch(imgUrl(f));
@@ -222,63 +224,81 @@ M15${z} 4PS
     return new Uint8Array(await r.arrayBuffer());
   };
 
+  // Word for Mac shrinks pictures to 75% when it copies them (text and tables keep their size),
+  // so pictures go into the Word file a third bigger and come out at the right size in Outlook.
+  // Sizes are exact (not rounded) so the pasted picture is a whole number of pixels - otherwise
+  // Word leaves a faint light line along the picture's edge.
+  const BANNER = { w: 592 / 0.75, h: 59 / 0.75 };   // 592 x 59 once pasted
+  const LOGO = { w: 113 / 0.75, h: 61 / 0.75 };     // 113 x 61 once pasted
+  const LOGO_COL = Math.ceil(LOGO.w);               // logo column must hold the enlarged logo
+  const SPARE_COL = Math.ceil(BANNER.w) - 592;      // empty column so the banner's row can hold the enlarged banner
+
   // Column widths (px) of the details row, measured from the preview so Word matches it
   function previewColumns() {
     const cells = [...preview.querySelectorAll('table tr')[2].children];
     const w = cells.map(td => Math.round(td.getBoundingClientRect().width));
+    if (w[3] < LOGO_COL) { w[0] -= LOGO_COL - w[3]; w[3] = LOGO_COL; }
     w[0] += 592 - w.reduce((a, b) => a + b, 0);   // make sure they add up to exactly 592
     return w;
   }
 
-  // Builds the signature as a Word document with the images embedded at their display size
+  // Builds the signature as a Word document with the images embedded
   function buildDocx(d, info, bannerData, logoData, colPx) {
-    const px = n => n * 15;                       // CSS px -> twips
+    const px = n => Math.round(n * 15);           // CSS px -> twips
     const black = { fill: '000000', type: d.ShadingType.CLEAR, color: 'auto' };
-    const none = { style: d.BorderStyle.NONE, size: 0, color: '000000' }; // black, so any border Outlook draws is invisible
-    const MAC = 4 / 3;                            // Word for Mac copies images at 72dpi (75% size) - enlarge to compensate
-    const nb = s => s.replace(/ /g, '\u00A0');  // non-breaking spaces so lines don't wrap on Mac fonts
-    const noBorders = { top: none, bottom: none, left: none, right: none };
+    const none = { style: d.BorderStyle.NONE, size: 0, color: 'auto' };
+    // Black borders only on edges BETWEEN black cells: invisible on black, and stops Outlook drawing
+    // grey lines there. Outer edges have no border, so no black line runs out past the block.
+    const solid = { style: d.BorderStyle.SINGLE, size: 4, color: '000000' };
+    const edges = (top, right, bottom, left) => ({ top: top ? solid : none, right: right ? solid : none, bottom: bottom ? solid : none, left: left ? solid : none });
     const font = 'Arial';
-    const body = { line: 300, lineRule: d.LineRuleType.EXACT, before: 0, after: 0 }; // 20px line height
-    const t = (text, o = {}) => new d.TextRun({ text: nb(text), font, size: 19, color: 'FFFFFF', ...o });
+    const line = { line: 300, lineRule: d.LineRuleType.EXACT, before: 0, after: 0 }; // 20px line height
+    const t = (text, o = {}) => new d.TextRun({ text, font, size: 19, color: 'FFFFFF', ...o });
     const link = (url, text, o = {}) => new d.ExternalHyperlink({ link: url, children: [t(text, o)] });
-    const para = (children, spacing = body) => new d.Paragraph({ children, spacing });
-    const cell = (children, width, margins, o = {}) => new d.TableCell({
-      children, width: { size: width, type: d.WidthType.DXA }, margins,
-      borders: noBorders, verticalAlign: d.VerticalAlign.TOP, ...o
+    // Left/right spacing is done with paragraph indents, not cell padding: padding makes Outlook
+    // widen the columns, which pushed the black block wider than the banner.
+    const para = (children, left = 0, right = 0, spacing = line) =>
+      new d.Paragraph({ children, spacing, indent: { left: px(left), right: px(right) } });
+    const cell = (children, width, top, bottom, o = {}) => new d.TableCell({
+      children, width: { size: px(width), type: d.WidthType.DXA },
+      margins: { top: px(top), bottom: px(bottom), left: 0, right: 0 },
+      borders: edges(0, 0, 0, 0), verticalAlign: d.VerticalAlign.TOP, ...o
     });
+    const blank = () => cell([new d.Paragraph({ spacing: { before: 0, after: 0 }, children: [] })], SPARE_COL, 0, 0);
     const white = { color: 'FFFFFF', underline: { type: d.UnderlineType.SINGLE, color: 'FFFFFF' } };
-    const cols = colPx.map(px);
+    const tight = { before: 0, after: 0 };
 
-    const col1 = [para([link('mailto:' + info.email, info.email, { color: '7FD1D9', underline: { type: d.UnderlineType.NONE } })])];
-    if (info.mobile) col1.push(para([t(info.mobile)]));
+    const col1 = [para([link('mailto:' + info.email, info.email, { color: '7FD1D9', underline: { type: d.UnderlineType.NONE } })], 24, 8)];
+    if (info.mobile) col1.push(para([t(info.mobile)], 24, 8));
 
     const rows = [
+      // Banner row: spans all five columns so it is wide enough for the enlarged banner
       new d.TableRow({ children: [cell([
         new d.Paragraph({ spacing: { before: 0, after: px(10) }, children: [
           new d.ExternalHyperlink({ link: 'https://highgrowth50.thisismc2.com/', children: [
-            new d.ImageRun({ data: bannerData, transformation: { width: Math.round(592 * MAC), height: Math.round(59 * MAC) },
+            new d.ImageRun({ data: bannerData, transformation: { width: BANNER.w, height: BANNER.h },
               altText: { name: 'banner', title: 'High Growth 50', description: 'High Growth 50 - Growth is changing shape. Download the report.' } })
           ] })
         ] })
-      ], px(592), { top: 0, bottom: 0, left: 0, right: 0 }, { columnSpan: 4 })] }),
+      ], 592 + SPARE_COL, 0, 0, { columnSpan: 5 })] }),
       new d.TableRow({ children: [cell([
-        para([t(info.name, { bold: true, size: 22 })], { before: 0, after: 0 }),
-        para([t(info.title, { size: 21 })], { before: 0, after: 0 })
-      ], px(592), { top: px(20), bottom: px(4), left: px(24), right: px(24) }, { columnSpan: 4, shading: black })] }),
+        para([t(info.name, { bold: true, size: 22 })], 24, 24, tight),
+        para([t(info.title, { size: 21 })], 24, 24, tight)
+      ], 592, 20, 4, { columnSpan: 4, shading: black, borders: edges(0, 0, 1, 0) }), blank()] }),
       new d.TableRow({ children: [
-        cell(col1, cols[0], { top: px(8), bottom: px(20), left: px(24), right: px(24) }, { shading: black }),
-        cell(['The Boardwalk', '21 Little Peter Street', 'Manchester', 'M15 4PS'].map(s => para([t(s)])),
-          cols[1], { top: px(8), bottom: px(20), left: 0, right: px(16) }, { shading: black }),
+        cell(col1, colPx[0], 8, 20, { shading: black, borders: edges(1, 1, 0, 0) }),
+        cell(['The Boardwalk', '21 Little Peter Street', 'Manchester', 'M15 4PS'].map(s => para([t(s)], 0, 16)),
+          colPx[1], 8, 20, { shading: black, borders: edges(1, 1, 0, 1) }),
         cell([
-          para([link('https://thisismc2.com/', 'thisismc2.com', white)]),
-          para([link('tel:01612361352', '0161 236 1352', white)]),
-          para([link('https://www.linkedin.com/company/mc2-manchester-ltd', 'LinkedIn', white)]),
-          para([link('https://www.instagram.com/thisismc2/', 'Instagram', white)])
-        ], cols[2], { top: px(8), bottom: px(20), left: 0, right: px(16) }, { shading: black }),
-        cell([new d.Paragraph({ children: [new d.ImageRun({ data: logoData, transformation: { width: Math.round(113 * MAC), height: Math.round(61 * MAC) },
+          para([link('https://thisismc2.com/', 'thisismc2.com', white)], 0, 16),
+          para([link('tel:01612361352', '0161 236 1352', white)], 0, 16),
+          para([link('https://www.linkedin.com/company/mc2-manchester-ltd', 'LinkedIn', white)], 0, 16),
+          para([link('https://www.instagram.com/thisismc2/', 'Instagram', white)], 0, 16)
+        ], colPx[2], 8, 20, { shading: black, borders: edges(1, 1, 0, 1) }),
+        cell([new d.Paragraph({ spacing: tight, children: [new d.ImageRun({ data: logoData, transformation: { width: LOGO.w, height: LOGO.h },
               altText: { name: 'logo', title: 'MC2', description: 'MC2 - Employee owned' } })] })],
-          cols[3], { top: px(8), bottom: px(20), left: 0, right: px(24) }, { shading: black, verticalAlign: d.VerticalAlign.CENTER })
+          colPx[3], 8, 20, { shading: black, borders: edges(1, 0, 0, 1), verticalAlign: d.VerticalAlign.CENTER }),
+        blank()
       ] })
     ];
 
@@ -286,11 +306,13 @@ M15${z} 4PS
       creator: 'MC2 Signature Generator',
       title: 'MC2 Signature - ' + info.name,
       sections: [{
-        properties: { page: { margin: { top: 720, bottom: 720, left: 720, right: 720 } } },
+        // A4 landscape, so the wider banner row fits on the page
+        properties: { page: { size: { width: 11906, height: 16838, orientation: d.PageOrientation.LANDSCAPE },
+                              margin: { top: 720, bottom: 720, left: 720, right: 720 } } },
         children: [new d.Table({
-          rows, columnWidths: cols, width: { size: px(592), type: d.WidthType.DXA },
+          rows, columnWidths: [...colPx, SPARE_COL].map(px), width: { size: px(592 + SPARE_COL), type: d.WidthType.DXA },
           layout: d.TableLayoutType.FIXED,
-          borders: { ...noBorders, insideHorizontal: none, insideVertical: none }
+          borders: { top: none, bottom: none, left: none, right: none, insideHorizontal: none, insideVertical: none }
         })]
       }]
     });
